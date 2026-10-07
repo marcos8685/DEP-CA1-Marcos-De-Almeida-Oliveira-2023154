@@ -1,0 +1,8 @@
+# R and RStudio session files
+.Rhistory
+.RData
+.Ruserdata
+.Rproj.user/
+
+# macOS metadata
+.DS_Store
