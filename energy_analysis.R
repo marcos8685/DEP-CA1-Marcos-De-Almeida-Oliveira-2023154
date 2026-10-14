@@ -269,3 +269,114 @@ energy <- energy %>%
 
 # Let's check again: every column should now have 0 missing values.
 colSums(is.na(energy))
+
+# ---- Step 4 – creating categorical variables --------------------------------
+energy <- energy %>%
+  mutate(
+    # Continent (nominal, no order): countrycode() turns the country code into
+    # its continent, for example "PRT" becomes "Europe".
+    continent = countrycode(iso_code, "iso3c", "continent"),
+
+    # Period (ordinal, it has an order): cut() puts each year into one of three
+    # 8-year groups. The breaks 1999, 2007, 2015, 2023 give us
+    # 2000-2007, 2008-2015 and 2016-2023.
+    period = cut(year, breaks = c(1999, 2007, 2015, 2023),
+                 labels = c("2000-2007", "2008-2015", "2016-2023")),
+
+    # Dominant source (nominal): which source makes the most electricity?
+    # max.col() tells us, for each row, the POSITION of the biggest of the 7
+    # shares (1 = coal, 2 = gas, ... 7 = solar), and we use that position to
+    # pick the right name from the list.
+    dominant_source = c("Coal", "Gas", "Oil", "Nuclear", "Hydro", "Wind", "Solar")[
+      max.col(across(all_of(share_cols)), ties.method = "first")]
+  )
+
+# If "other renewables" (like geothermal in Kenya) is bigger than all of the 7
+# sources, then that one becomes the dominant source instead.
+# apply(..., 1, max) finds the biggest of the 7 shares in each row (1 = by row).
+energy$dominant_source[energy$other_ren_share_elec >
+                         apply(energy[share_cols], 1, max)] <- "Other renewables"
+
+# Now let's look at the new categories to make sure they look right
+# (useNA = "ifany" would show us any country code that didn't match a continent).
+table(energy$continent, useNA = "ifany")
+table(energy$dominant_source)
+
+# ---- Step 5 – looking for outliers -------------------------------------------
+# The size variables are very right-skewed, so now we look for outliers using
+# the IQR rule: a value is an outlier if it's below Q1 - 1.5*IQR or above
+# Q3 + 1.5*IQR.
+
+# Here I write a small function that counts the outliers in a column.
+iqr_outliers <- function(x) {
+  q <- quantile(x, c(.25, .75), na.rm = TRUE)   # q[1] is Q1 and q[2] is Q3
+  i <- q[2] - q[1]                               # the IQR is Q3 - Q1
+  # Now we check every value against the two limits. sum() of TRUE/FALSE
+  # gives us how many values are outside.
+  sum(x < q[1] - 1.5 * i | x > q[2] + 1.5 * i, na.rm = TRUE)
+}
+
+# These are the numeric columns we want to check.
+num_vars <- c("population", "electricity_generation", "per_capita_electricity",
+              "energy_per_capita", "carbon_intensity_elec")
+
+# sapply() runs our function on each of those columns and gives the counts.
+sapply(energy[num_vars], iqr_outliers)
+
+# Let's also measure the skewness with Pearson's formula: 3(mean - median) / sd.
+# Above 0 means right-skewed (long tail of big values), below 0 means
+# left-skewed, and close to 0 means more or less symmetric.
+sapply(energy[num_vars], function(x) round(3 * (mean(x) - median(x)) / sd(x), 2))
+
+# Now let's see it in a picture: a boxplot before and after a log transform.
+# p1 is the raw electricity per person, where a few huge values squash the box.
+p1 <- ggplot(energy, aes(y = per_capita_electricity)) + geom_boxplot(fill = "#f4a259") +
+  labs(title = "Raw: electricity per capita", y = "kWh / person") +
+  theme(axis.text.x = element_blank())          # the x-axis means nothing here
+# p2 is the same thing on a log10 scale, and it looks much more balanced.
+p2 <- ggplot(energy, aes(y = log10(per_capita_electricity))) + geom_boxplot(fill = "#5b8e7d") +
+  labs(title = "After log10 transform", y = "log10(kWh / person)") +
+  theme(axis.text.x = element_blank())
+# Here we put the two plots side by side so we can compare them.
+grid.arrange(p1, p2, ncol = 2)
+
+# So who are these outliers? Let's take 2023, sort from the highest to the
+# lowest electricity per person, and look at the top 8.
+energy %>% filter(year == 2023) %>%
+  arrange(desc(per_capita_electricity)) %>%
+  select(country, per_capita_electricity, carbon_intensity_elec, dominant_source) %>%
+  head(8)
+
+# My decision: these outliers are real, not mistakes. Iceland's aluminium
+# smelters run on geothermal and hydro, and the Gulf states use a lot of gas
+# for desalination and air-conditioning. So I KEEP them. But so they don't
+# take over methods based on distances (like PCA), I log-transform the size
+# variables.
+
+# log10 squeezes the big values (10 -> 1, 1000 -> 3, 1,000,000 -> 6), so China
+# and Tuvalu end up on a comparable scale. I add a small number (+0.01 or +1)
+# because log10(0) is -Infinity and a few tiny countries have a value of 0.
+energy <- energy %>%
+  mutate(log_population     = log10(population),
+         log_generation     = log10(electricity_generation + 0.01),
+         log_elec_per_cap   = log10(per_capita_electricity + 1),
+         log_energy_per_cap = log10(energy_per_capita + 1))
+
+# Let's count the outliers again. There should be far fewer now.
+sapply(energy[c("log_population","log_generation","log_elec_per_cap","log_energy_per_cap")],
+       iqr_outliers)
+
+# ---- The final clean dataset ------------------------------------------------
+# Now let's check the final size (the brief asks for at least 3000 rows and
+# 7 columns) and have a quick look at every column.
+dim(energy)
+glimpse(energy)
+# And here we save the clean data, so we don't have to clean it again next time.
+write_csv(energy, "data/energy_clean.csv")
+
+# How many years of data does each country have? (This matters later,
+# because countries with more years count more in the pooled PCA.)
+summary(as.vector(table(energy$country)))
+
+# The clean data has 5,052 rows (212 countries x up to 24 years) and 26
+# columns, with no missing values in the variables we use from here on.
