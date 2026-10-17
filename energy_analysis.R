@@ -380,3 +380,205 @@ summary(as.vector(table(energy$country)))
 
 # The clean data has 5,052 rows (212 countries x up to 24 years) and 26
 # columns, with no missing values in the variables we use from here on.
+
+# =============================================================================
+# EXPLORATORY DATA ANALYSIS
+# =============================================================================
+
+# ---- Q1 – Variation: how is carbon intensity distributed? -------------------
+# Here we make a histogram of carbon intensity for 2023 only, so each country
+# is counted just once.
+ggplot(energy %>% filter(year == 2023), aes(carbon_intensity_elec)) +
+  # Each bar covers 50 grams of CO2 per kWh.
+  geom_histogram(binwidth = 50, fill = "#2a7ab9", colour = "white") +
+  # The dashed line shows the median, so we can see where the "middle" country is.
+  geom_vline(xintercept = median(energy$carbon_intensity_elec[energy$year == 2023]),
+             linetype = "dashed") +
+  labs(title = "Carbon intensity of electricity, 2023",
+       subtitle = "Dashed line = median",
+       x = "gCO2 per kWh", y = "Number of countries")
+
+# Here I count the countries in each part of the histogram, so the numbers I
+# quote below come straight from R.
+e23 <- energy %>% filter(year == 2023)
+c(countries_2023  = nrow(e23),
+  under_200       = sum(e23$carbon_intensity_elec < 200),
+  from_200_to_450 = sum(e23$carbon_intensity_elec >= 200 & e23$carbon_intensity_elec <= 450),
+  over_450_to_700 = sum(e23$carbon_intensity_elec > 450 & e23$carbon_intensity_elec <= 700),
+  median          = round(median(e23$carbon_intensity_elec)))
+
+# What I found unusual: there isn't one "typical" country, there are two
+# groups. 50 countries have very clean grids under 200 g/kWh (hydro and
+# nuclear countries like Norway, Paraguay and France), while the biggest group
+# (96 of the 209 countries) sits between 450 and 700 g/kWh (oil, gas and coal
+# countries), with fewer countries in between (48 between 200 and 450, and 15 above 700).
+
+# Now let's look at each energy source separately, one small histogram per
+# source, again for 2023.
+energy %>% filter(year == 2023) %>%
+  select(all_of(share_cols)) %>%                     # just the 7 share columns
+  # We make it long: "name" is the source and "value" is the share in %.
+  pivot_longer(everything()) %>%
+  mutate(name = str_remove(name, "_share_elec")) %>% # "coal_share_elec" becomes "coal"
+  ggplot(aes(value)) +
+  geom_histogram(bins = 20, fill = "#5b8e7d", colour = "white") +
+  # facet_wrap() draws one small panel per source, and scales = "free_y" lets
+  # each panel have its own height.
+  facet_wrap(~ name, scales = "free_y") +
+  labs(title = "Share of electricity by source, 2023 (each panel = one source)",
+       x = "% of electricity", y = "Countries")
+
+# Let's see which countries get 90 % or more of their electricity from oil.
+e23 %>% filter(oil_share_elec >= 90) %>% pull(country)
+
+# Every source has a U-shape with a big spike at zero: most countries either
+# don't use a source at all or depend heavily on it. Oil stands out: 26
+# countries get 90 % or more of their electricity from oil, and 21 of them are
+# small islands (Bahamas, Maldives, Grenada...). The other five are poorer
+# countries with small grids, like Chad, South Sudan and Gambia.
+
+# ---- Q2 – Covariation: are richer, energy-hungry countries cleaner? --------
+# Here we plot energy use per person against carbon intensity for 2023. I also
+# use colour for the continent and point size for the population, so we can
+# see two extra things in the same chart.
+ggplot(energy %>% filter(year == 2023),
+       aes(energy_per_capita, carbon_intensity_elec, colour = continent,
+           size = population)) +
+  geom_point(alpha = .7) +                  # a bit transparent so overlapping points show
+  scale_x_log10(labels = comma) +           # log x-axis because energy use is very skewed
+  scale_size(range = c(1, 12), guide = "none") +
+  labs(title = "Energy use per person vs. carbon intensity of electricity (2023)",
+       x = "Primary energy per capita (kWh, log scale)", y = "gCO2 per kWh",
+       colour = "Continent")
+
+# Now let's put a number on it with the Pearson correlation (all years).
+# Close to 0 means no linear relationship, close to +1 or -1 means a strong one.
+cor(energy$log_energy_per_cap, energy$carbon_intensity_elec)
+
+# What I found: the correlation is only weak (r = 0.21), so being rich or
+# using a lot of energy does NOT really tell us if a grid is clean or dirty.
+# High-energy countries show up at both ends: Iceland, Norway and Sweden at the
+# bottom (under 40 g/kWh), and Bahrain, Brunei and Turkmenistan at the top
+# (around 900 g/kWh or more). Geography (rivers for
+# hydro) and policy (nuclear) seem to matter more than wealth.
+
+# Next, let's look at how ALL the numeric variables relate to each other with a
+# correlation matrix. cor() works out the correlation between every pair.
+cm <- cor(energy %>% select(log_population, log_generation, log_elec_per_cap,
+                            log_energy_per_cap, carbon_intensity_elec,
+                            all_of(share_cols), other_ren_share_elec))
+
+# To draw it with ggplot we first turn the matrix into a long table
+# (Var1, Var2, Freq = the correlation), then draw one coloured tile per pair.
+as.data.frame(as.table(cm)) %>%
+  ggplot(aes(Var1, Var2, fill = Freq)) +
+  geom_tile() +
+  geom_text(aes(label = round(Freq, 2)), size = 2.6) +   # write the number in each tile
+  # Blue means negative, white means 0, red means positive.
+  scale_fill_gradient2(low = "#2a7ab9", mid = "white", high = "#c0392b",
+                       limits = c(-1, 1), name = "r") +
+  labs(title = "Correlation matrix of numeric features", x = NULL, y = NULL) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# What stands out in the matrix:
+# - Carbon intensity goes up with oil (0.42) and coal (0.31), and goes down
+#   very strongly with hydro (-0.82). So around the world, hydro is the main
+#   "clean" alternative, much more than nuclear (-0.23).
+# - log_population and log_generation are strongly correlated (0.77, bigger
+#   countries make more electricity). That's repeated information, and PCA
+#   will be able to combine it.
+# - Oil share goes down as population goes up (r = -0.61): oil-powered
+#   grids are mostly a small-island thing.
+
+# ---- Q3 – Change over time: what is replacing fossil fuels? ----------------
+# (The numbers I quote in this section come from printing world_mix for 2000
+# and 2023 and from the small table further down.)
+# Now we work out the world electricity mix for each year. A simple average
+# would give Tuvalu the same weight as China, so instead I use weighted.mean()
+# with electricity_generation as the weight. That way each country counts as
+# much as the electricity it actually produces.
+world_mix <- energy %>%
+  group_by(year) %>%                              # one result for each year
+  summarise(across(c(all_of(share_cols), other_ren_share_elec),
+                   ~ weighted.mean(., electricity_generation))) %>%
+  pivot_longer(-year, names_to = "source", values_to = "share") %>%
+  mutate(source = str_remove(source, "_share_elec"))
+
+# Let's print the mix for the first and last year so we can compare them.
+world_mix %>% filter(year %in% c(2000, 2023)) %>%
+  pivot_wider(names_from = year, values_from = share)
+
+# Here we draw a stacked area chart: each coloured band is one source, and
+# together they add up to 100 %.
+ggplot(world_mix, aes(year, share, fill = source)) +
+  geom_area(colour = "white", linewidth = .2) +
+  # I fixed the colours so each source is easy to recognise (coal is dark grey, etc.).
+  scale_fill_manual(values = c(coal = "#4d4d4d", gas = "#e69f00", oil = "#8c510a",
+                               nuclear = "#cc79a7", hydro = "#0072b2",
+                               wind = "#56b4e9", solar = "#f0e442",
+                               other_ren = "#009e73")) +
+  labs(title = "Global electricity mix 2000–2023 (generation-weighted)",
+       x = NULL, y = "% of electricity", fill = "Source")
+
+# Now let's count how many countries get at least 10 % from wind + solar, in
+# three snapshot years.
+energy %>%
+  filter(year %in% c(2000, 2010, 2023)) %>%
+  group_by(year) %>%
+  summarise(
+    # sum() of a TRUE/FALSE condition counts how many countries meet it.
+    countries_with_10pct_wind_solar = sum(wind_share_elec + solar_share_elec >= 10),
+    # And this is the fossil share of the "typical" (median) country, not
+    # weighted by size.
+    median_fossil_share = median(fossil_share_elec))
+
+# What I found: coal's share of world electricity barely moves (about 38 % to
+# 35 %), oil collapses (about 9 % to 3 %), nuclear's share almost halves (about
+# 17 % to 9 %), gas goes up (about 18 % to 23 %), and wind + solar grow from
+# almost nothing to about 13 %. The number of countries getting at least 10 %
+# from wind + solar went from just 1 in 2000 to 71 in 2023. But the median
+# country's fossil share only drops from about 75 % to 66 %, so the change is
+# happening mainly in a group of countries, not everywhere.
+
+# ---- Q4 – How do the continents compare? -----------------------------------
+# Here we make boxplots of carbon intensity by continent, with one panel for
+# each period. reorder() sorts the continents from the cleanest to the
+# dirtiest median, which makes it easier to read.
+ggplot(energy, aes(reorder(continent, carbon_intensity_elec, median),
+                   carbon_intensity_elec, fill = continent)) +
+  geom_boxplot(outlier.alpha = .3, show.legend = FALSE) +  # outlier dots made lighter
+  facet_wrap(~ period) +                                   # 3 panels: 2000-07, 2008-15, 2016-23
+  labs(title = "Carbon intensity of electricity by continent and period",
+       x = NULL, y = "gCO2 per kWh") +
+  theme(axis.text.x = element_text(angle = 30, hjust = 1))
+
+# The medians behind the boxplots, so we can quote them exactly.
+energy %>% group_by(continent, period) %>%
+  summarise(median_ci = round(median(carbon_intensity_elec)), .groups = "drop") %>%
+  pivot_wider(names_from = period, values_from = median_ci)
+
+# And now let's compare how many countries are dominated by each source in
+# 2000 and in 2023.
+energy %>% filter(year %in% c(2000, 2023)) %>%
+  count(year, dominant_source) %>%                 # number of countries per source per year
+  ggplot(aes(reorder(dominant_source, n), n, fill = factor(year))) +
+  geom_col(position = "dodge") +                   # "dodge" puts the bars side by side
+  coord_flip() +
+  scale_fill_manual(values = c("#9ecae1", "#08519c")) +  # light blue = 2000, dark blue = 2023
+  labs(title = "Number of countries by dominant electricity source",
+       x = NULL, y = "Countries", fill = "Year")
+
+# The same counts as a table.
+energy %>% filter(year %in% c(2000, 2023)) %>%
+  count(year, dominant_source) %>%
+  pivot_wider(names_from = year, values_from = n, values_fill = 0)
+
+# What I found: Europe has the lowest carbon intensity and it's falling the
+# fastest (median from about 460 to 300 g/kWh). Asia (about 600–640) and
+# Oceania (about 570–600) stay the highest. The Americas and Africa hardly
+# change, and Africa has a really wide spread, from oil-powered islands to
+# hydro countries like Ethiopia and DR Congo. Between 2000 and 2023 the number
+# of countries dominated by oil goes from 81 to 62 and by coal from 29 to 22,
+# while gas goes up from 30 to 53 countries, and wind becomes the main source
+# in six countries for the first time (Denmark, Germany, Lithuania,
+# Luxembourg, Portugal and Uruguay).
