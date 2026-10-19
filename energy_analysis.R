@@ -582,3 +582,48 @@ energy %>% filter(year %in% c(2000, 2023)) %>%
 # while gas goes up from 30 to 53 countries, and wind becomes the main source
 # in six countries for the first time (Denmark, Germany, Lithuania,
 # Luxembourg, Portugal and Uruguay).
+
+# =============================================================================
+# ENCODING
+# =============================================================================
+#
+# PCA only works with numbers, so first we need to turn the categorical
+# variables into numbers:
+# - Label encoding for "period", because it has a natural order
+#   (2000-07 < 2008-15 < 2016-23), so it becomes 1, 2, 3.
+# - One-hot encoding for "continent", because continents have no order.
+#   We have k = 5 continents (Africa, Americas, Asia, Europe, Oceania), so we
+#   make k - 1 = 4 dummy columns. Africa is the reference (all zeros). We
+#   leave one out to avoid the "dummy variable trap" (the columns would
+#   otherwise always add up to 1 and repeat information).
+# - I did NOT put "dominant_source" into the PCA, because it comes from the
+#   share columns and would just repeat them. Instead I use it later to colour
+#   the PCA plot and check if the results make sense.
+
+# Label encoding: period is a factor with the levels in order, and
+# as.integer() swaps each level for its position (1, 2, 3). This is fine here
+# because the numbers keep the real order.
+energy$period_code <- as.integer(energy$period)
+table(energy$period, energy$period_code)          # quick check of the mapping
+
+# One-hot encoding: if we gave continents numbers 1 to 5, R would think
+# "Europe > Asia", which makes no sense. So instead each continent gets its
+# own 0/1 column.
+energy$continent <- factor(energy$continent)
+# model.matrix() creates those 0/1 columns for us, and it automatically leaves
+# out the first level (Africa) as the reference, so we get k - 1 = 4 columns.
+# A row with 0 in all four columns is Africa. The [, -1] removes the
+# "(Intercept)" column of 1s that model.matrix adds.
+continent_dummies <- model.matrix(~ continent, data = energy)[, -1]
+# Here I rename the columns from "continentEurope" to "is_Europe" so they're
+# easier to read.
+colnames(continent_dummies) <- str_replace(colnames(continent_dummies), "continent", "is_")
+head(continent_dummies)
+
+# Now we add the 4 new columns to the data.
+energy_enc <- bind_cols(energy, as.data.frame(continent_dummies))
+
+# Let's check it worked: every row should have either one 1 (Americas, Asia,
+# Europe or Oceania) or no 1s at all (Africa). If any row had two or more 1s,
+# something would be wrong.
+table(rowSums(continent_dummies))
