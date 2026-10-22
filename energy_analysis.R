@@ -627,3 +627,136 @@ energy_enc <- bind_cols(energy, as.data.frame(continent_dummies))
 # Europe or Oceania) or no 1s at all (Africa). If any row had two or more 1s,
 # something would be wrong.
 table(rowSums(continent_dummies))
+
+# =============================================================================
+# PRINCIPAL COMPONENT ANALYSIS
+# =============================================================================
+
+# ---- Choosing the variables and scaling them --------------------------------
+# These are the 18 variables that go into the PCA: the 4 log size variables,
+# carbon intensity, the 8 source shares, the label-encoded period, and the 4
+# one-hot continent columns.
+pca_vars <- c("log_population", "log_generation", "log_elec_per_cap",
+              "log_energy_per_cap", "carbon_intensity_elec",
+              share_cols, "other_ren_share_elec",
+              "period_code", colnames(continent_dummies))
+
+X <- energy_enc[, pca_vars]
+
+# Now we run the PCA (method as described in Jolliffe and Cadima, 2016).
+# - center = TRUE subtracts the mean of each column (PCA needs this).
+# - scale. = TRUE divides each column by its standard deviation (z-score).
+#   This is important because our variables are on very different scales:
+#   carbon intensity goes up to about 1000, the shares go from 0 to 100, and
+#   the dummies are just 0 or 1. Without scaling, carbon intensity would take
+#   over the PCA just because its numbers are bigger.
+pca <- prcomp(X, center = TRUE, scale. = TRUE)
+
+# Let's look at how much variance each of the first 8 components explains
+# (standard deviation, proportion of variance, cumulative proportion).
+summary(pca)$importance[, 1:8]
+
+# ---- How many components should we keep? ------------------------------------
+# Here I put the variance of each component into a small table.
+# pca$sdev is the standard deviation of each component, and squaring it gives
+# the eigenvalue (its variance).
+var_exp <- tibble(PC    = seq_along(pca$sdev),
+                  eigen = pca$sdev^2,                  # eigenvalue
+                  prop  = eigen / sum(eigen),          # share of the total variance
+                  cum   = cumsum(prop))                # running total
+
+# Now we draw the scree plot. The bars are the variance of each component, the
+# red line is the running total, and the dashed line marks 80 %.
+p_scree <- ggplot(var_exp, aes(PC, prop)) +
+  geom_col(fill = "#2a7ab9") +
+  geom_line(aes(y = cum), colour = "#c0392b") + geom_point(aes(y = cum), colour = "#c0392b") +
+  geom_hline(yintercept = .8, linetype = "dashed") +
+  scale_y_continuous(labels = percent) +
+  labs(title = "Scree plot (bars) & cumulative variance (red)",
+       x = "Principal component", y = "Variance explained")
+p_scree
+
+# I used two rules to decide how many components to keep:
+# - Kaiser rule (Kaiser, 1960): keep the components with an eigenvalue above
+#   1, meaning they explain more than ONE of the original (standardised)
+#   variables would.
+k_kaiser <- sum(var_exp$eigen > 1)
+# - 80 % rule: how many components we need to reach 80 % of the variance.
+k_80     <- which(var_exp$cum >= .8)[1]
+c(kaiser_rule = k_kaiser, components_for_80pct = k_80, n_original = length(pca_vars))
+
+# With the Kaiser rule (eigenvalue > 1) we keep 6 components, and we would
+# need 8 to reach 80 % of the variance, out of the 18 original variables.
+
+# ---- What does each component mean? (loadings) -------------------------------
+# The loadings (pca$rotation) tell us how much each original variable counts
+# in each component, from -1 to 1. A big number (positive or negative) means
+# that variable is important for that component.
+# Here we take the first 4 components and reshape them for ggplot.
+load_df <- as.data.frame(pca$rotation[, 1:4]) %>%
+  rownames_to_column("variable") %>%                # move the variable names into a column
+  pivot_longer(-variable, names_to = "PC", values_to = "loading")
+
+# One panel for each component: red bars are positive, blue bars are negative.
+ggplot(load_df, aes(loading, reorder(variable, loading), fill = loading > 0)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ PC, nrow = 1) +
+  scale_fill_manual(values = c("#2a7ab9", "#c0392b")) +
+  labs(title = "Loadings of the first four principal components", x = "Loading", y = NULL)
+
+# And here are the same loadings as a table, rounded to 2 decimals.
+round(pca$rotation[, 1:4], 2)
+
+# To help me give each component a name, this little function shows the 5
+# strongest loadings (sorted by size, ignoring the sign).
+top_loadings <- function(pc, n = 5) {
+  l <- pca$rotation[, pc]
+  l[order(-abs(l))][1:n] |> round(2)
+}
+lapply(c(PC1 = 1, PC2 = 2, PC3 = 3, PC4 = 4), top_loadings)
+
+# ---- Scores plot (biplot) ----------------------------------------------------
+# The scores (pca$x) are where each country-year lands on the components.
+# Here we take PC1 and PC2 and add back the country, year, continent and
+# dominant source, so we can colour and label the points.
+scores <- as.data.frame(pca$x[, 1:2]) %>%
+  bind_cols(energy_enc %>% select(country, year, continent, dominant_source))
+
+# Now the arrows for the variables (that's the "bi" in biplot). I multiply the
+# loadings by 6 only so the arrows are big enough to see next to the points,
+# and I only draw the variables with a loading above 0.2 so the plot isn't
+# too crowded.
+arrows <- as.data.frame(pca$rotation[, 1:2] * 6) %>% rownames_to_column("var") %>%
+  filter(abs(PC1) > 1.2 | abs(PC2) > 1.2)
+
+ggplot(scores, aes(PC1, PC2)) +
+  # I colour the points by dominant source. This was NOT used to build the
+  # PCA, so if the colours form groups it's a good sign the components make sense.
+  geom_point(aes(colour = dominant_source), alpha = .35, size = 1) +
+  geom_segment(data = arrows, aes(0, 0, xend = PC1, yend = PC2),
+               arrow = arrow(length = unit(.2, "cm")), colour = "black") +
+  geom_text(data = arrows, aes(PC1 * 1.1, PC2 * 1.1, label = var), size = 3) +
+  # Here I label a few well-known countries (where they are in 2023) to make
+  # it easier to read.
+  geom_text(data = scores %>% filter(year == 2023,
+                                     country %in% c("China", "United States", "France",
+                                                    "Norway", "Saudi Arabia", "Germany",
+                                                    "Paraguay", "Barbados", "India", "Brazil")),
+            aes(label = country), size = 3, fontface = "bold") +
+  labs(title = "PCA biplot: country-years on PC1 vs PC2",
+       subtitle = "Points coloured by dominant electricity source (not used in PCA)",
+       x = paste0("PC1 (", percent(var_exp$prop[1], .1), ")"),   # % of variance in the axis title
+       y = paste0("PC2 (", percent(var_exp$prop[2], .1), ")"),
+       colour = "Dominant source") +
+  guides(colour = guide_legend(override.aes = list(alpha = 1, size = 3)))
+
+# Finally, let's follow a few countries over time to see how they moved in the
+# PCA space from 2000 to 2023.
+sel <- c("Germany", "United Kingdom", "China", "Denmark", "Chile", "France")
+ggplot(scores %>% filter(country %in% sel), aes(PC1, PC2, colour = country)) +
+  # geom_path() joins the years in order, and the arrow shows the direction.
+  geom_path(arrow = arrow(length = unit(.2, "cm"))) +
+  # The dots mark where each country starts (2000) and ends (2023).
+  geom_point(data = scores %>% filter(country %in% sel, year %in% c(2000, 2023)), size = 2) +
+  labs(title = "Country trajectories in PCA space, 2000 → 2023",
+       x = "PC1", y = "PC2")
