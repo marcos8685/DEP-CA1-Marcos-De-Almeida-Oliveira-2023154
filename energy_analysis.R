@@ -760,3 +760,150 @@ ggplot(scores %>% filter(country %in% sel), aes(PC1, PC2, colour = country)) +
   geom_point(data = scores %>% filter(country %in% sel, year %in% c(2000, 2023)), size = 2) +
   labs(title = "Country trajectories in PCA space, 2000 → 2023",
        x = "PC1", y = "PC2")
+
+# ---- Robustness checks: does the PCA still hold if we change the inputs? ----
+# Before interpreting the PCA, I want to be critical about what went into it.
+# Some of my 18 inputs are built-in duplicates of each other:
+#   - electricity generation = population x electricity per person, so
+#     log_generation is almost exactly log_population + log_elec_per_cap;
+#   - the 8 source shares always add up to 100 %. Data that sums to a fixed
+#     total like this is called compositional data, and it means each share
+#     can be predicted from the other seven;
+#   - carbon intensity is mostly decided by the shares (coal and oil are dirty,
+#     hydro and nuclear are clean).
+# Let's prove these three things with numbers first.
+
+# 1) How close is log_generation to log_population + log_elec_per_cap?
+cor(energy$log_generation, energy$log_population + energy$log_elec_per_cap)
+# 2) What do the 8 shares add up to in each row?
+summary(rowSums(energy[c(share_cols, "other_ren_share_elec")]))
+# 3) How much of carbon intensity can the shares explain? (R-squared of a
+#    simple linear regression of carbon intensity on the shares)
+summary(lm(carbon_intensity_elec ~ ., data = energy[c("carbon_intensity_elec", share_cols)]))$r.squared
+
+# The answers: r = 0.9996, the shares add up to 100 % in every row, and the shares explain 89 % of carbon intensity. So
+# there is repeated information in the PCA inputs, which is part of the reason
+# the variance is spread out and we need 8 of 18 components to reach 80 %.
+
+# Now I run the PCA again in three different ways and compare. To avoid
+# writing the same code three times, here is a small function that runs a
+# PCA and returns the summary numbers we care about.
+run_pca <- function(data, vars, label) {
+  p  <- prcomp(data[, vars], center = TRUE, scale. = TRUE)
+  ev <- p$sdev^2                                   # eigenvalues
+  list(pca = p,
+       summary = tibble(model     = label,
+                        rows      = nrow(data),
+                        variables = length(vars),
+                        PC1_pct   = round(100 * ev[1] / sum(ev), 1),
+                        PC2_pct   = round(100 * ev[2] / sum(ev), 1),
+                        kaiser    = sum(ev > 1),                         # eigenvalue > 1
+                        for_80pct = which(cumsum(ev) / sum(ev) >= .8)[1]))
+}
+
+# Check A – drop the exact duplicates: log_generation (= population x per
+# person) and other_ren_share_elec (it's just 100 minus the other shares).
+vars_no_dup <- setdiff(pca_vars, c("log_generation", "other_ren_share_elec"))
+check_A <- run_pca(energy_enc, vars_no_dup, "A: no duplicates")
+
+# Check B – numeric variables only, WITHOUT the encoded columns (no continent
+# dummies and no period), to see if the "clean vs dirty" pattern exists on its
+# own or if the encoded variables are creating it.
+vars_numeric <- setdiff(pca_vars, c("period_code", colnames(continent_dummies)))
+check_B <- run_pca(energy_enc, vars_numeric, "B: no encoded columns")
+
+# Check C – one year only (2023), so every country appears exactly once. In
+# the main PCA, Germany 2015 and Germany 2016 are almost the same row, so a
+# country with 24 years counts much more than one with only a few years.
+# period_code has to be removed here because it's the same for every row in
+# 2023 (a constant column can't be scaled).
+energy_2023 <- energy_enc %>% filter(year == 2023)
+vars_2023   <- setdiff(pca_vars, "period_code")
+check_C <- run_pca(energy_2023, vars_2023, "C: 2023 only")
+
+# Now we put the main PCA and the three checks in one table to compare them.
+bind_rows(run_pca(energy_enc, pca_vars, "Main PCA")$summary,
+          check_A$summary, check_B$summary, check_C$summary)
+
+# Is PC2 ("clean vs dirty") the same in check B as in the main PCA? Since both
+# use the same rows, we can correlate the scores directly (1 = identical).
+# The sign of a component is arbitrary (another computer or package version
+# could flip it and give -0.98 instead of 0.98), so I use abs(): only the
+# size of the correlation matters.
+abs(cor(pca$x[, 2], check_B$pca$x[, 2]))
+abs(cor(pca$x[, 1], check_B$pca$x[, 1]))
+# For 2023 the rows are different, so instead we compare the loadings of the
+# 17 shared variables (1 = same pattern), again ignoring the sign.
+abs(cor(pca$rotation[vars_2023, 1], check_C$pca$rotation[, 1]))
+abs(cor(pca$rotation[vars_2023, 2], check_C$pca$rotation[, 2]))
+
+# Let's also show it in a picture: the PC2 loadings in the main PCA, without
+# the encoded columns, and with 2023 only. (The sign of a component is
+# arbitrary, so I flip each one so that hydro is positive, to compare them.)
+pc2_loadings <- function(p, label) {
+  l <- p$rotation[, 2]
+  if (l["hydro_share_elec"] < 0) l <- -l
+  tibble(variable = names(l), loading = l, model = label)
+}
+bind_rows(pc2_loadings(pca, "Main PCA"),
+          pc2_loadings(check_B$pca, "B: no encoded columns"),
+          pc2_loadings(check_C$pca, "C: 2023 only")) %>%
+  ggplot(aes(loading, reorder(variable, loading), fill = model)) +
+  geom_col(position = "dodge") +
+  scale_fill_manual(values = c("#2a7ab9", "#f4a259", "#5b8e7d")) +
+  labs(title = "PC2 'clean vs dirty' loadings in three versions of the PCA",
+       x = "Loading on PC2", y = NULL, fill = NULL)
+
+# What I found:
+# - A (no duplicates, 16 variables): PC1 18.4 %, PC2 16.4 %, still 6
+#   components by Kaiser and still 8 for 80 %. PC1 and PC2 keep the same
+#   meaning. So the duplicates add some repetition, but they are not the main
+#   reason the variance is spread out: the shares with lots of zeros and the
+#   0/1 dummies are.
+# - B (no encoded columns, 13 variables): PC1 25.1 % and PC2 20.0 %, and only
+#   5 components by Kaiser (6 for 80 %). The PC2 scores correlate r = 0.997
+#   with the main PC2, and PC1 r = 0.98. So the "clean vs dirty" structure is
+#   real on its own, and the continent and period columns mostly just add
+#   their own extra components (PC3 = region, PC4 = time in the main PCA).
+# - C (2023 only, 209 countries, one row each): PC1 22.0 % and PC2 15.3 %,
+#   with 7 components by Kaiser and 8 for 80 %.
+#   PC1 has practically the same loadings as before (r = 0.99). PC2 is still
+#   "clean vs dirty" (carbon intensity -0.53, hydro +0.36), but in a single
+#   year region mixes into it more (Asia -0.36, Europe +0.23), so the loading
+#   pattern matches less closely (r = 0.74). So pooling the years did not
+#   create the structure, although it does make PC2 a bit "cleaner".
+
+# ---- What the PCA tells us ----------------------------------------------------
+# - Reduction: the 18 standardised variables are summarised by 6 components
+#   with an eigenvalue above 1. PC1 and PC2 alone explain 20.7 % and 14.8 % of
+#   the variance. The variance is quite spread out (no single component
+#   dominates), which makes sense because the source shares have lots of zeros
+#   and the continent columns are almost independent of each other.
+# - PC1 (20.7 %) – "size of the power system vs. small oil islands":
+#   log generation (-0.47) and log population (-0.34), together with the coal,
+#   gas and nuclear shares, are on the negative side, while oil share is on
+#   the positive side (+0.42). So big industrial grids (China, France,
+#   Germany) are at one end and small oil-powered islands (Barbados) at the
+#   other. (The sign of a component doesn't matter, only the contrast does.)
+# - PC2 (14.8 %) – "clean vs. dirty electricity": hydro share (+0.52) against
+#   carbon intensity (-0.50) and energy/electricity per person. Hydro
+#   countries (Paraguay, Norway, Brazil) score high, and coal, gas and oil
+#   countries score low.
+# - PC3 (12.0 %) – "Europe & wind vs. Asia & gas": the Europe column (+0.35)
+#   and wind (+0.33) against the Asia column (-0.44), gas and carbon intensity.
+# - PC4 (8.7 %) – "time / new renewables": solar (-0.56), period (-0.54) and
+#   wind (-0.34) move together, which is the recent solar and wind boom.
+# - Built-in duplicates: some inputs repeat each other (log_generation is
+#   almost exactly log_population + log_elec_per_cap, the shares always add up
+#   to 100 %, and the shares explain 89 % of carbon intensity). The checks
+#   above show the main results stay the same when we remove them.
+# - Encoded columns: the continent dummies and period mainly drive PC3 and
+#   PC4. Without them (check B) the clean vs dirty component is unchanged
+#   (r = 0.997), so it doesn't depend on the encoding.
+# - Checking with a label we didn't use: when we colour by dominant source,
+#   the coal, hydro, oil and gas countries end up in different parts of the
+#   PC1–PC2 plot. So the components are picking up real structure.
+# - The country paths show the energy transition: the UK (PC2 from -0.9 to
+#   +0.3) and Germany (-0.9 to 0.0) move towards the clean side between 2000
+#   and 2023. China moves a lot along PC1 (its grid grows), but stays on the
+#   dirty side. France and Norway barely move (steady nuclear and hydro).
