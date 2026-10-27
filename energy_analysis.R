@@ -907,3 +907,86 @@ bind_rows(pc2_loadings(pca, "Main PCA"),
 #   +0.3) and Germany (-0.9 to 0.0) move towards the clean side between 2000
 #   and 2023. China moves a lot along PC1 (its grid grows), but stays on the
 #   dirty side. France and Norway barely move (steady nuclear and hydro).
+
+# =============================================================================
+# CONCLUSIONS
+# =============================================================================
+#
+# 1. The world's electricity systems split into two groups: very clean hydro
+#    and nuclear grids, and fossil grids. Not many countries are in between.
+# 2. Being rich doesn't mean having a clean grid (only r = 0.2 between energy
+#    use and carbon intensity). Natural resources (rivers) and policy choices
+#    (nuclear, support for renewables) matter more.
+# 3. Between 2000 and 2023 oil almost disappears from electricity, gas takes
+#    over in many countries, and wind + solar go from almost zero to a real
+#    share. But coal's global share hardly falls, because of growth in Asia.
+# 4. After label and one-hot encoding, PCA reduces 18 variables to 6
+#    components (eigenvalue above 1). The first four can be read as: system
+#    size, clean vs. dirty mix, region, and the recent wind/solar transition.
+#    The "clean vs dirty" component is robust: it stays the same without the
+#    encoded columns and without the duplicate variables, and still shows up
+#    when we use only one year. These components could be used later for
+#    clustering or modelling, without the overlap (multicollinearity) between
+#    the original variables.
+#
+# Limitations:
+# - Pooling the years: I treat every country-year as a separate, independent
+#   observation, but they aren't. Germany 2015 and Germany 2016 are almost the
+#   same row, so a country with 24 years of data counts more than one with
+#   fewer years (the median country has all 24 years, but the minimum is 10,
+#   as the summary in the "final clean dataset" step shows), and the PCA partly sees the same country many times. Check C
+#   (2023 only) shows the main structure survives with one row per country,
+#   but a stricter analysis could use country averages or one year.
+# - Every country also counts the same no matter its size, so a tiny island
+#   weighs as much as China.
+# - Built-in duplicates: generation = population x per person, the shares add
+#   up to 100 % (compositional data), and carbon intensity mostly follows the
+#   shares. A method made for compositional data (e.g. a log-ratio transform)
+#   would be more correct for the shares.
+# - GDP had to be dropped because about 28 % of it was missing.
+# - "Dominant source" is a simplification for countries with a mixed grid.
+# - PCA is a linear method, while the shares (with lots of zeros) are not
+#   normally distributed.
+#
+
+# =============================================================================
+# REFERENCES (Harvard style)
+# =============================================================================
+#
+# Arel-Bundock, V., Enevoldsen, N. and Yetman, C.J. (2018) 'countrycode: an R
+#   package to convert country names and country codes', Journal of Open
+#   Source Software, 3(28), p. 848. doi: 10.21105/joss.00848.
+#
+# Auguie, B. (2026) gridExtra: miscellaneous functions for 'grid' graphics.
+#   R package version 2.3.1. doi: 10.32614/CRAN.package.gridExtra. Available
+#   at: https://CRAN.R-project.org/package=gridExtra (Accessed: 20 November
+#   2026).
+#
+# IEA (2024) CO2 emissions in 2023. Paris: International Energy Agency.
+#   Available at: https://www.iea.org/reports/co2-emissions-in-2023
+#   (Accessed: 20 November 2026).
+#
+# Jolliffe, I.T. and Cadima, J. (2016) 'Principal component analysis: a review
+#   and recent developments', Philosophical Transactions of the Royal Society
+#   A, 374(2065), 20150202. doi: 10.1098/rsta.2015.0202.
+#
+# Kaiser, H.F. (1960) 'The application of electronic computers to factor
+#   analysis', Educational and Psychological Measurement, 20(1), pp. 141-151.
+#   doi: 10.1177/001316446002000116.
+#
+# R Core Team (2026) R: a language and environment for statistical computing.
+#   Version 4.6.1. Vienna: R Foundation for Statistical Computing.
+#   doi: 10.32614/R.manuals. Available at: https://www.R-project.org/
+#   (Accessed: 20 November 2026).
+#
+# Ritchie, H., Rosado, P. and Roser, M. (2023) 'Energy', Our World in Data.
+#   Available at: https://github.com/owid/energy-data
+#   (Accessed: 20 November 2026).
+#
+# Wickham, H. et al. (2019) 'Welcome to the tidyverse', Journal of Open
+#   Source Software, 4(43), p. 1686. doi: 10.21105/joss.01686.
+#
+# Wickham, H., Pedersen, T.L. and Seidel, D. (2025) scales: scale functions
+#   for visualization. R package version 1.4.0. doi:
+#   10.32614/CRAN.package.scales. Available at:
+#   https://CRAN.R-project.org/package=scales (Accessed: 20 November 2026).
