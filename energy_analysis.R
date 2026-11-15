@@ -378,7 +378,7 @@ write_csv(energy, "data/energy_clean.csv")
 # because countries with more years count more in the pooled PCA.)
 summary(as.vector(table(energy$country)))
 
-# The clean data has 5,052 rows (212 countries x up to 24 years) and 26
+# The clean data has 5,052 rows (212 countries x up to 24 years) and 25
 # columns, with no missing values in the variables we use from here on.
 
 # =============================================================================
