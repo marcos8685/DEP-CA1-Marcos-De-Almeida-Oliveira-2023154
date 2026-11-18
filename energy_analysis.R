@@ -517,7 +517,7 @@ ggplot(world_mix, aes(year, share, fill = source)) +
                                nuclear = "#cc79a7", hydro = "#0072b2",
                                wind = "#56b4e9", solar = "#f0e442",
                                other_ren = "#009e73")) +
-  labs(title = "Global electricity mix 2000–2023 (generation-weighted)",
+  labs(title = "Global electricity mix 2000-2023 (generation-weighted)",
        x = NULL, y = "% of electricity", fill = "Source")
 
 # Now let's count how many countries get at least 10 % from wind + solar, in
@@ -758,7 +758,7 @@ ggplot(scores %>% filter(country %in% sel), aes(PC1, PC2, colour = country)) +
   geom_path(arrow = arrow(length = unit(.2, "cm"))) +
   # The dots mark where each country starts (2000) and ends (2023).
   geom_point(data = scores %>% filter(country %in% sel, year %in% c(2000, 2023)), size = 2) +
-  labs(title = "Country trajectories in PCA space, 2000 → 2023",
+  labs(title = "Country trajectories in PCA space, 2000 -> 2023",
        x = "PC1", y = "PC2")
 
 # ---- Robustness checks: does the PCA still hold if we change the inputs? ----
