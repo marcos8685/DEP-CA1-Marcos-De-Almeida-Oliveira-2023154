@@ -246,6 +246,13 @@ energy <- energy %>%
     # (the check above showed this is correct).
     across(all_of(share_cols), ~ replace_na(., 0)),
 
+    # Hidden missing values: four French overseas territories (French Guiana,
+    # Guadeloupe, Martinique and Reunion) have energy_per_capita = 0 from about
+    # 2011 onwards, even though they keep making electricity every year. Nobody
+    # uses zero energy, so these zeros really mean "not reported". We turn them
+    # into NA so they get filled in the next step like any other gap.
+    energy_per_capita = na_if(energy_per_capita, 0),
+
     # energy_per_capita still has a few gaps. Here we fill each gap with that
     # country's OWN median, so a missing year in Portugal gets Portugal's usual
     # value, not the world average. I used the median instead of the mean
@@ -455,7 +462,7 @@ ggplot(energy %>% filter(year == 2023),
 # Close to 0 means no linear relationship, close to +1 or -1 means a strong one.
 cor(energy$log_energy_per_cap, energy$carbon_intensity_elec)
 
-# What I found: the correlation is only weak (r = 0.21), so being rich or
+# What I found: the correlation is only weak (r = 0.24), so being rich or
 # using a lot of energy does NOT really tell us if a grid is clean or dirty.
 # High-energy countries show up at both ends: Iceland, Norway and Sweden at the
 # bottom (under 40 g/kWh), and Bahrain, Brunei and Turkmenistan at the top
@@ -685,7 +692,8 @@ k_kaiser <- sum(var_exp$eigen > 1)
 k_80     <- which(var_exp$cum >= .8)[1]
 c(kaiser_rule = k_kaiser, components_for_80pct = k_80, n_original = length(pca_vars))
 
-# With the Kaiser rule (eigenvalue > 1) we keep 6 components, and we would
+# With the Kaiser rule (eigenvalue > 1) we keep 7 components (PC7 only just
+# passes, with an eigenvalue of 1.006), and we would
 # need 8 to reach 80 % of the variance, out of the 18 original variables.
 
 # ---- What does each component mean? (loadings) -------------------------------
@@ -855,58 +863,57 @@ bind_rows(pc2_loadings(pca, "Main PCA"),
        x = "Loading on PC2", y = NULL, fill = NULL)
 
 # What I found:
-# - A (no duplicates, 16 variables): PC1 18.4 %, PC2 16.4 %, still 6
-#   components by Kaiser and still 8 for 80 %. PC1 and PC2 keep the same
-#   meaning. So the duplicates add some repetition, but they are not the main
+# - A (no duplicates, 16 variables): PC1 18.7 %, PC2 17.0 %, 6 components by
+#   Kaiser and still 8 for 80 %. PC1 and PC2 keep the same meaning. So the duplicates add some repetition, but they are not the main
 #   reason the variance is spread out: the shares with lots of zeros and the
 #   0/1 dummies are.
-# - B (no encoded columns, 13 variables): PC1 25.1 % and PC2 20.0 %, and only
-#   5 components by Kaiser (6 for 80 %). The PC2 scores correlate r = 0.997
+# - B (no encoded columns, 13 variables): PC1 25.3 % and PC2 20.7 %, and only
+#   5 components by Kaiser (6 for 80 %). The PC2 scores correlate r = 0.99
 #   with the main PC2, and PC1 r = 0.98. So the "clean vs dirty" structure is
 #   real on its own, and the continent and period columns mostly just add
 #   their own extra components (PC3 = region, PC4 = time in the main PCA).
-# - C (2023 only, 209 countries, one row each): PC1 22.0 % and PC2 15.3 %,
-#   with 7 components by Kaiser and 8 for 80 %.
-#   PC1 has practically the same loadings as before (r = 0.99). PC2 is still
-#   "clean vs dirty" (carbon intensity -0.53, hydro +0.36), but in a single
-#   year region mixes into it more (Asia -0.36, Europe +0.23), so the loading
-#   pattern matches less closely (r = 0.74). So pooling the years did not
-#   create the structure, although it does make PC2 a bit "cleaner".
+# - C (2023 only, 209 countries, one row each): PC1 22.0 % and PC2 15.5 %,
+#   with 7 components by Kaiser and 7 for 80 %.
+#   PC1 has practically the same loadings as before (r = 0.99), and PC2 is
+#   still "clean vs dirty" (carbon intensity -0.49 against hydro +0.47), with
+#   a very similar loading pattern (r = 0.95). So pooling the years did not
+#   create the structure: it is there with one row per country too.
 
 # ---- What the PCA tells us ----------------------------------------------------
-# - Reduction: the 18 standardised variables are summarised by 6 components
-#   with an eigenvalue above 1. PC1 and PC2 alone explain 20.7 % and 14.8 % of
-#   the variance. The variance is quite spread out (no single component
+# - Reduction: the 18 standardised variables are summarised by 7 components
+#   with an eigenvalue above 1 (PC7 only just, at 1.006, so 6 would also be a
+#   fair choice). PC1 and PC2 alone explain 20.8 % and 15.4 % of the variance. The variance is quite spread out (no single component
 #   dominates), which makes sense because the source shares have lots of zeros
 #   and the continent columns are almost independent of each other.
-# - PC1 (20.7 %) – "size of the power system vs. small oil islands":
-#   log generation (-0.47) and log population (-0.34), together with the coal,
+# - PC1 (20.8 %) – "size of the power system vs. small oil islands":
+#   log generation (-0.47) and log population (-0.32), together with the coal,
 #   gas and nuclear shares, are on the negative side, while oil share is on
-#   the positive side (+0.42). So big industrial grids (China, France,
+#   the positive side (+0.41). So big industrial grids (China, France,
 #   Germany) are at one end and small oil-powered islands (Barbados) at the
 #   other. (The sign of a component doesn't matter, only the contrast does.)
-# - PC2 (14.8 %) – "clean vs. dirty electricity": hydro share (+0.52) against
-#   carbon intensity (-0.50) and energy/electricity per person. Hydro
+# - PC2 (15.4 %) – "clean vs. dirty electricity": hydro share (+0.49) against
+#   carbon intensity (-0.46) and energy/electricity per person. Hydro
 #   countries (Paraguay, Norway, Brazil) score high, and coal, gas and oil
 #   countries score low.
-# - PC3 (12.0 %) – "Europe & wind vs. Asia & gas": the Europe column (+0.35)
-#   and wind (+0.33) against the Asia column (-0.44), gas and carbon intensity.
-# - PC4 (8.7 %) – "time / new renewables": solar (-0.56), period (-0.54) and
-#   wind (-0.34) move together, which is the recent solar and wind boom.
+# - PC3 (12.2 %) – "Asia & gas vs. Europe & wind": the Asia column (+0.44),
+#   carbon intensity (+0.34) and gas (+0.29) against the Europe column (-0.32)
+#   and wind (-0.31).
+# - PC4 (8.6 %) – "time / new renewables": solar (+0.56), period (+0.53) and
+#   wind (+0.34) move together, which is the recent solar and wind boom.
 # - Built-in duplicates: some inputs repeat each other (log_generation is
 #   almost exactly log_population + log_elec_per_cap, the shares always add up
 #   to 100 %, and the shares explain 89 % of carbon intensity). The checks
 #   above show the main results stay the same when we remove them.
 # - Encoded columns: the continent dummies and period mainly drive PC3 and
 #   PC4. Without them (check B) the clean vs dirty component is unchanged
-#   (r = 0.997), so it doesn't depend on the encoding.
+#   (r = 0.99), so it doesn't depend on the encoding.
 # - Checking with a label we didn't use: when we colour by dominant source,
 #   the coal, hydro, oil and gas countries end up in different parts of the
 #   PC1–PC2 plot. So the components are picking up real structure.
-# - The country paths show the energy transition: the UK (PC2 from -0.9 to
-#   +0.3) and Germany (-0.9 to 0.0) move towards the clean side between 2000
-#   and 2023. China moves a lot along PC1 (its grid grows), but stays on the
-#   dirty side. France and Norway barely move (steady nuclear and hydro).
+# - The country paths show the energy transition: Denmark (PC2 from -1.4 to
+#   -0.2), the UK (-0.7 to +0.1) and Germany (-0.7 to -0.3) move towards the
+#   clean side between 2000 and 2023. China moves a lot along PC1 (its grid
+#   grows) but hardly at all along PC2. France barely moves (steady nuclear).
 
 # =============================================================================
 # CONCLUSIONS
@@ -914,13 +921,13 @@ bind_rows(pc2_loadings(pca, "Main PCA"),
 #
 # 1. The world's electricity systems split into two groups: very clean hydro
 #    and nuclear grids, and fossil grids. Not many countries are in between.
-# 2. Being rich doesn't mean having a clean grid (only r = 0.2 between energy
+# 2. Being rich doesn't mean having a clean grid (only r = 0.24 between energy
 #    use and carbon intensity). Natural resources (rivers) and policy choices
 #    (nuclear, support for renewables) matter more.
 # 3. Between 2000 and 2023 oil almost disappears from electricity, gas takes
 #    over in many countries, and wind + solar go from almost zero to a real
 #    share. But coal's global share hardly falls, because of growth in Asia.
-# 4. After label and one-hot encoding, PCA reduces 18 variables to 6
+# 4. After label and one-hot encoding, PCA reduces 18 variables to 7
 #    components (eigenvalue above 1). The first four can be read as: system
 #    size, clean vs. dirty mix, region, and the recent wind/solar transition.
 #    The "clean vs dirty" component is robust: it stays the same without the
